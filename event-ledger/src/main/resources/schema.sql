@@ -42,6 +42,16 @@ CREATE TABLE IF NOT EXISTS stock_levels (
   reservation_ttl_seconds int NOT NULL
 );
 
+
+ALTER TABLE stock_levels DROP CONSTRAINT IF EXISTS stock_levels_reserved_non_negative;
+ALTER TABLE stock_levels ADD CONSTRAINT stock_levels_reserved_non_negative CHECK (reserved >= 0);
+
+ALTER TABLE stock_levels DROP CONSTRAINT IF EXISTS stock_levels_sold_non_negative;
+ALTER TABLE stock_levels ADD CONSTRAINT stock_levels_sold_non_negative CHECK (sold >= 0);
+
+ALTER TABLE stock_levels DROP CONSTRAINT IF EXISTS stock_levels_total_non_negative;
+ALTER TABLE stock_levels ADD CONSTRAINT stock_levels_total_non_negative CHECK (total >= 0);
+
 INSERT INTO stock_levels (sku, total, reserved, sold, reservation_ttl_seconds)
 VALUES ('PHONE-X-256-BLK', 100, 0, 0, 900)
 ON CONFLICT (sku) DO NOTHING;

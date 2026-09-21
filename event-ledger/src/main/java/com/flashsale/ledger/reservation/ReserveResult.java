@@ -5,6 +5,6 @@ import java.time.LocalDateTime;
 import lombok.Builder;
 
 @Builder
-public record ReserveResult(Outcome outcome, Reservation reservation) {
+public record ReserveResult(OrderOutcome outcome, Reservation reservation) {
 
 }

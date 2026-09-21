@@ -1,7 +1,7 @@
 package com.flashsale.ledger.api;
 
 import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.flashsale.ledger.reservation.Outcome;
+import com.flashsale.ledger.reservation.OrderOutcome;
 import com.flashsale.ledger.reservation.ReservationService;
 import com.flashsale.ledger.reservation.ReserveRequest;
 import com.flashsale.ledger.reservation.ReserveResult;
@@ -47,13 +47,24 @@ public class OrderController {
 		ReserveResult res = reservationService.reserve(reqForReservation);
 		HttpStatus status = decideStatusCodeFromReserveOutcome(res.outcome());
 		
+		if(res.outcome() == OrderOutcome.ORDER_ALREADY_RESERVED)
+			return ResponseEntity.status(status).body(alreadyReservedBody(reqForReservation.orderId()));
+		
 		return ResponseEntity.status(status).body(mapper.writeValueAsString(res.reservation()));
 	}
 
-	private HttpStatus decideStatusCodeFromReserveOutcome(Outcome outcome) {
-		if(outcome == Outcome.RESERVED)
+	private String alreadyReservedBody(String orderId) {
+		ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,  "An active reservation already exists for this order. "
+                + "Retry with the original idempotency key, or wait for the reservation to expire.");
+		pd.setTitle("Order Already Reserved");
+		pd.setProperty("order_id", orderId);
+		return mapper.writeValueAsString(pd);
+	}
+
+	private HttpStatus decideStatusCodeFromReserveOutcome(OrderOutcome outcome) {
+		if(outcome == OrderOutcome.RESERVED)
 			return HttpStatus.CREATED;
-		if(outcome == Outcome.SOLD_OUT)
+		if(outcome == OrderOutcome.SOLD_OUT || outcome == OrderOutcome.ORDER_ALREADY_RESERVED)
 			return HttpStatus.CONFLICT;
 		
 		return HttpStatus.OK;

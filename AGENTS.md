@@ -1,5 +1,3 @@
-# AGENTS.md
-
 ## The principle
 
 **This project exists to teach concepts, not to ship an app.** Its purpose is a job hunt:

@@ -8,3 +8,4 @@ venv/
 .DS_Store
 .work/
 .claude/settings.local.json
+/.metadata/

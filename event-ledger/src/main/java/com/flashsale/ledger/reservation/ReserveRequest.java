@@ -3,7 +3,6 @@ package com.flashsale.ledger.reservation;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Builder;
-import lombok.Setter;
 
 @Builder
 public record ReserveRequest(
@@ -13,7 +12,6 @@ public record ReserveRequest(
 		@NotBlank(message = "Account Id cannot be empty")
 		String accountId, 
 
-		@NotBlank(message = "Idempotency Key cannot be empty")
 		String idempotencyKey,
 		
 		@NotBlank(message = "SKU cannot be empty")
