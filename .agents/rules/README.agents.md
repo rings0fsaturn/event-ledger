@@ -21,6 +21,7 @@ If a rule conflicts with the live code, inspect the code and flag the discrepanc
 | `08-concepts-and-first-encounters.agents.md` | Concepts and First Encounters | Introducing an unfamiliar tool or a core distributed-systems concept. |
 | `09-work-record.agents.md` | Work Record | Reading or updating `.work/` state, status, or session notes. |
 | `10-dontuse-hwclock.agents` | Linux Command  Replacement of using sudo hwclock -s. |
+| `11-graphify.agents.md` | Graphify | Querying the knowledge graph, or updating and relabelling it. |
 
 ## Adding Or Changing Rules
 
