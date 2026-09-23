@@ -17,4 +17,6 @@ public interface ReservationRepo {
 
 	 Integer setResolvedAtToNowForReservationID(String reservationId);
 
+	 Optional<Reservation> getUnresolvedReservationById(String reservationId);
+
 }

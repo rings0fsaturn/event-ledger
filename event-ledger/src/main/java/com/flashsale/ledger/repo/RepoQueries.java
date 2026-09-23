@@ -18,6 +18,8 @@ public class RepoQueries {
 	
 	public static final String getUnresolvedExpiringReservationByIdLockedForUpdate= "SELECT reservation_id, order_id, account_id, sku, quantity, expires_at FROM reservations "
 	        + "WHERE reservation_id = ? AND resolved_at IS NULL AND expires_at <= now() FOR UPDATE";
+	public static final String getUnresolvedReservationById= "SELECT reservation_id, order_id, account_id, sku, quantity, expires_at FROM reservations "
+			+ "WHERE reservation_id = ? AND resolved_at IS NULL";
 
 	public static final String setResolvedAtToNowForReservationID ="UPDATE reservations SET resolved_at = now() WHERE reservation_id = ? AND resolved_at IS NULL";
 	
@@ -25,6 +27,13 @@ public class RepoQueries {
 //	Reservation_resolution Queries
 	public static final String createReservationResolution = "INSERT INTO reservation_resolution(reservation_id, outcome, event_key) "
 			+ "VALUES (:reservation_id, :outcome, :event_key)";
+	
+	public static final String getOutcomeFromReservationResolutionById = "SELECT outcome FROM reservation_resolution WHERE reservation_id=?";
+	
+	public static final String clearReservationResolutionById = "DELETE FROM reservation_resolution WHERE reservation_id=?";
+	
+	
+	
 
 // 	EVENTS queries
 	public static final String getEventsByAccountIdAndIdempotencyKey = "SELECT event_type, occurred_at, received_at, payload "
@@ -46,4 +55,18 @@ public class RepoQueries {
 	
 	public static final String decrementReservedStockLevelByQuantity = "UPDATE stock_levels set reserved = reserved - :quantity "
 			+ "where sku=:sku and reserved >= :quantity";
+	
+	
+	public static final String decrementReservedIncrementSoldInStockLevelByQuantity = "UPDATE stock_levels "
+			+ "set reserved = reserved - :quantity, sold = sold + :quantity "
+			+ "where sku=:sku and reserved >= :quantity";
+	
+	
+	
+//	Refund Intent
+	public static final String createRefundIntent = "INSERT INTO refund_intent (reservation_id, order_id, reason) "
+			+ "VALUES (:reservation_id, :order_id, :reason) "
+			+ "ON CONFLICT (reservation_id) DO NOTHING";
+	
+	
 }

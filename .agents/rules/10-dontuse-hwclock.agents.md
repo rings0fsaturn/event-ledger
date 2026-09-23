@@ -1,0 +1,1 @@
+Dont use: sudo hwclock -s , instead use timedatectl without sudo.

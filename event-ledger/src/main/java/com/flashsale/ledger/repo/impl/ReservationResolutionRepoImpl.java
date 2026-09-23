@@ -8,6 +8,7 @@ import org.springframework.stereotype.Repository;
 import com.flashsale.ledger.repo.RepoQueries;
 import com.flashsale.ledger.repo.ReservationResolutionRepo;
 import com.flashsale.ledger.reservation.ReservationResolution;
+import com.flashsale.ledger.reservation.ReservationResolutionOutcome;
 
 import lombok.RequiredArgsConstructor;
 
@@ -19,7 +20,7 @@ public class ReservationResolutionRepoImpl implements ReservationResolutionRepo 
 	private final NamedParameterJdbcTemplate namedJdbcTemplate;
 	
 	@Override
-	public Integer createExpiredReservationResolution(ReservationResolution res) {
+	public Integer createReservationResolution(ReservationResolution res) {
 		MapSqlParameterSource param = new MapSqlParameterSource()
 				.addValue("reservation_id", res.reservationId())
 				.addValue("outcome", res.outcome().getValue())
@@ -27,4 +28,15 @@ public class ReservationResolutionRepoImpl implements ReservationResolutionRepo 
 		return namedJdbcTemplate.update(RepoQueries.createReservationResolution, param);	
 	}
 
+	
+	@Override
+	public ReservationResolutionOutcome getOutcomeFromReservationResolutionById(String reservationId) {
+		String outcome = jdbcTemplate.queryForObject(RepoQueries.getOutcomeFromReservationResolutionById, String.class, reservationId);
+		return ReservationResolutionOutcome.fromDbValue(outcome);
+	}
+
+	@Override
+	public int clearReservationResolutionById(String reservationId) {
+		return jdbcTemplate.update(RepoQueries.clearReservationResolutionById, reservationId);
+	}
 }

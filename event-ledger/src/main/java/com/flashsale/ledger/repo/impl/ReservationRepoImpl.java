@@ -52,4 +52,15 @@ public class ReservationRepoImpl implements ReservationRepo{
 		return jdbcTemplate.update(RepoQueries.setResolvedAtToNowForReservationID, reservationId);
 	}
 	
+	@Override
+	public Optional<Reservation> getUnresolvedReservationById(String reservationId){
+		List<Reservation> res = jdbcTemplate.query(RepoQueries.getUnresolvedReservationById, 
+				new DataClassRowMapper<>(Reservation.class), 
+				reservationId);
+		
+		if(res!=null && !res.isEmpty())
+			return Optional.of(res.get(0));
+		return Optional.empty();
+	}
+	
 }

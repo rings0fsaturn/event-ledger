@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.flashsale.ledger.event.EventType;
 import com.flashsale.ledger.event.Events;
+import com.flashsale.ledger.event.EventsPayload;
 import com.flashsale.ledger.repo.EventsRepo;
 import com.flashsale.ledger.repo.ReservationRepo;
 import com.flashsale.ledger.repo.StockLevelRepo;
@@ -27,7 +28,7 @@ public class ReservationService {
 	private final ReservationRepo reservationRepo;
 	private final StockLevelRepo stockLevelRepo;
 	private final EventsRepo eventsRepo;
-	private final ObjectMapper objectMapper;
+	private final EventsPayload eventsPayload;
 	
 	@Transactional(isolation = Isolation.READ_COMMITTED)
 	public ReserveResult reserve(ReserveRequest request) {
@@ -41,7 +42,7 @@ public class ReservationService {
 			Events event = eventO.get();
 			return ReserveResult.builder()
 					.outcome(OrderOutcome.DUPLICATE)
-					.reservation(objectMapper.readValue(event.payload(), Reservation.class))
+					.reservation(eventsPayload.getReservation(event.payload()))
 					.build();
 		}
 		// First Time event
@@ -75,13 +76,12 @@ public class ReservationService {
 	}
 
 	private void createEvent(ReserveRequest request, Reservation currReservation) {
-		String reservationJsonPayload = objectMapper.writeValueAsString(currReservation);
 		
 		Events event = Events.builder()
 				.accountId(request.accountId())
 				.idempotencyKey(request.idempotencyKey())
 				.eventType(EventType.INVENTORY_RESERVED)
-				.payload(reservationJsonPayload)
+				.payload(eventsPayload.reserved(currReservation))
 				.build();
 		
 		int rowsInserted = eventsRepo.createEvent(event);

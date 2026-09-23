@@ -26,21 +26,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.client.RestClient;
 
+import com.flashsale.ledger.payment.PaymentCaptureOutcome;
+import com.flashsale.ledger.payment.PaymentCaptureService;
 import com.flashsale.ledger.sweep.ReservationExpiryService;
 
-// STAGED DRILL (D3). The payment path does not exist yet: there is no
-// PaymentCaptureService, so the only writer of `captured` is this test. That is
-// deliberate - the drill shapes the seam the author will type next, and both
-// writers must be shaped by the same drill to be comparable.
-//
-// The two methods below stand in for the two sides of the race and are the
-// contract the real PaymentCaptureService must satisfy:
-//   captureForTest      - the would-be webhook: gate insert, then mutate the
-//                         ledger. `reserved -> 0, sold + q` in ONE statement.
-//   refundForTest       - the webhook-loses branch (spec 6(d)): record the intent
-//                         to refund, loudly, and touch nothing else.
-// Both are NOT @Transactional: the point is that the DB decides the winner by
-// primary key, not that one transaction rolls back.
+// D3 drill (spec 6(d), 8b.6 D3). Both writers are real beans now:
+// expiry via ReservationExpiryService, payment via PaymentCaptureService.
+// The gate (reservation_resolution PK) decides the winner, not the latch timing.
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestPropertySource(properties = {
@@ -61,6 +53,9 @@ class SweeperRaceTest {
 
 	@Autowired
 	ReservationExpiryService expiryService;
+
+	@Autowired
+	PaymentCaptureService paymentCaptureService;
 
 	private RestClient rest;
 
@@ -133,7 +128,8 @@ class SweeperRaceTest {
 				ready.countDown();
 				start.await(10, TimeUnit.SECONDS);
 				Thread.sleep(paymentDelay);
-				return captureAndSettle(reservationId, orderId, sku, 1);
+				return paymentCaptureService.capture(reservationId, orderId)
+						== com.flashsale.ledger.payment.PaymentCaptureOutcome.CAPTURED;
 			};
 
 			Future<String> expiryFuture = pool.submit(expirySide);
@@ -216,85 +212,128 @@ class SweeperRaceTest {
 		assertEquals(captured.get(), num(stock, "sold"), "sold equals the number of payments that won");
 	}
 
-	// -- the payment side, stubbed until PaymentCaptureService exists ----------
+	// Stripe redelivery: two webhooks for the same paid order race each other.
+	// Exactly one takes the gate, the loser re-reads `captured` and does nothing.
+	// No refund in either case - the unit is sold, not lost.
+	@Test
+	void duplicateWebhookResolvesToOneCaptureAndNoRefund() throws Exception {
+		String sku = "TEST-D2-" + shortId();
+		seedSku(sku, 100, 900);
 
-	/**
-	 * STANDS IN FOR PaymentCaptureService.captureForTest.
-	 *
-	 * @return true if this call won the gate and moved the units.
-	 *
-	 * Contract the real service must satisfy:
-	 *  - gate first: INSERT INTO reservation_resolution with outcome 'captured'
-	 *    and event_key {reservation_id}:captured. DuplicateKeyException means the
-	 *    sweeper won.
-	 *  - on losing, call refundForTest and return false. Touch nothing else.
-	 *  - on winning, write the PaymentCaptured event, move BOTH counters in one
-	 *    statement (reserved - q, sold + q), then stamp resolved_at expecting 1 row.
-	 *
-	 * Not @Transactional on purpose: one connection cannot be in two transactions,
-	 * so a single transaction would serialise the two sides and remove the race
-	 * being measured.
-	 */
-	private boolean captureAndSettle(String reservationId, String orderId, String sku, int quantity) {
-		// Re-check first, mirroring expireOne's guard. Without this the payment is
-		// structurally one statement ahead of expiry and wins every round, which
-		// measures the drill's asymmetry rather than the design's race.
-		// No expiry predicate: lateness is decided by the gate, not by a clock read.
-		Integer live = jdbc.queryForObject(
-				"SELECT COUNT(*) FROM reservations WHERE reservation_id = ? AND resolved_at IS NULL",
-				Integer.class, reservationId);
-		if (live == 0) {
-			// Already resolved, so there is no race to win. But who resolved it matters:
-			//   expired  - expiry beat us. The money has still arrived for an order we can
-			//              no longer fulfil, so the refund must be opened (spec 6(d)).
-			//   captured - we already did this, i.e. a webhook redelivery. Idempotent no-op.
-			// Returning silently here would be the bug the drill exists to catch: the
-			// webhook-loses branch is reachable WITHOUT a primary-key conflict.
-			String already = jdbc.queryForObject(
-					"SELECT outcome FROM reservation_resolution WHERE reservation_id = ?",
-					String.class, reservationId);
-			if ("expired".equals(already)) {
-				refundForTest(reservationId, orderId);
-			}
-			return false;
-		}
-		try {
-			jdbc.update("INSERT INTO reservation_resolution (reservation_id, outcome, event_key) VALUES (?, 'captured', ?)",
-					reservationId, reservationId + ":captured");
-		} catch (org.springframework.dao.DuplicateKeyException e) {
-			refundForTest(reservationId, orderId);
-			return false;
-		}
-		jdbc.update("INSERT INTO events (account_id, idempotency_key, event_type, occurred_at, payload)"
-				+ " VALUES (?, ?, 'PaymentCaptured', now(), CAST(? AS jsonb)) ON CONFLICT DO NOTHING",
-				"acct-capture", reservationId + ":captured",
-				"{\"reservation_id\":\"" + reservationId + "\"}");
-		int moved = jdbc.update("UPDATE stock_levels SET reserved = reserved - ?, sold = sold + ? WHERE sku = ?"
-				+ " AND reserved >= ?", quantity, quantity, sku, quantity);
-		if (moved != 1) {
-			throw new IllegalStateException("payment won the gate but could not move units: " + reservationId);
-		}
-		int stamped = jdbc.update("UPDATE reservations SET resolved_at = now() WHERE reservation_id = ?"
-				+ " AND resolved_at IS NULL", reservationId);
-		if (stamped != 1) {
-			throw new IllegalStateException("payment won the gate but could not stamp resolved_at: " + reservationId);
-		}
-		return true;
+		String orderId = "ord-d2-" + shortId();
+		String key = "key-d2-" + shortId();
+		assertEquals(201, postOrder("acct-d2-" + shortId(), orderId, sku, 1, key).getStatusCode().value(),
+				"reserves");
+		String reservationId = jdbc.queryForObject(
+				"SELECT reservation_id FROM reservations WHERE order_id = ?", String.class, orderId);
+
+		CountDownLatch ready = new CountDownLatch(2);
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService pool = Executors.newFixedThreadPool(2);
+
+		Callable<PaymentCaptureOutcome> webhook = () -> {
+			ready.countDown();
+			assertTrue(start.await(10, TimeUnit.SECONDS), "both webhooks released");
+			return paymentCaptureService.capture(reservationId, orderId);
+		};
+
+		Future<PaymentCaptureOutcome> first = pool.submit(webhook);
+		Future<PaymentCaptureOutcome> second = pool.submit(webhook);
+		assertTrue(ready.await(10, TimeUnit.SECONDS), "both webhooks arrived");
+		start.countDown();
+
+		PaymentCaptureOutcome outcomeA = first.get(30, TimeUnit.SECONDS);
+		PaymentCaptureOutcome outcomeB = second.get(30, TimeUnit.SECONDS);
+		pool.shutdown();
+
+		// Gate: exactly one resolution, and it is the capture.
+		assertEquals(1, intAt("SELECT COUNT(*) FROM reservation_resolution WHERE reservation_id = ?",
+				reservationId), "exactly one resolution");
+		assertEquals("captured", jdbc.queryForObject(
+				"SELECT outcome FROM reservation_resolution WHERE reservation_id = ?", String.class, reservationId),
+				"the gate says captured");
+
+		// One CAPTURED, one NOT_CAPTURABLE, in either order.
+		assertTrue(
+				(outcomeA == PaymentCaptureOutcome.CAPTURED && outcomeB == PaymentCaptureOutcome.NOT_CAPTURABLE)
+						|| (outcomeA == PaymentCaptureOutcome.NOT_CAPTURABLE && outcomeB == PaymentCaptureOutcome.CAPTURED),
+				"one webhook captures, the redelivery is a no-op, got " + outcomeA + " and " + outcomeB);
+
+		// Money: the unit moved once, and no refund exists because nothing was lost.
+		Map<String, Object> stock = jdbc.queryForMap(
+				"SELECT reserved, sold, total FROM stock_levels WHERE sku = ?", sku);
+		assertEquals(0, num(stock, "reserved"), "unit left reserved");
+		assertEquals(1, num(stock, "sold"), "unit moved to sold exactly once");
+		assertEquals(0, intAt("SELECT COUNT(*) FROM refund_intent WHERE reservation_id = ?", reservationId),
+				"no refund when the payment itself wins");
+		assertTrue(num(stock, "reserved") + num(stock, "sold") <= num(stock, "total"), "I1 holds");
 	}
 
-	/**
-	 * STANDS IN FOR the spec 6(d) webhook-loses branch.
-	 *
-	 * The money consequence: we hold payment for an order we can no longer fulfil,
-	 * so the refund must be recorded. Phase 4 replaces this with the real Stripe
-	 * call; the intent row is the part that must not be skipped.
-	 *
-	 * ON CONFLICT DO NOTHING because webhooks redeliver.
-	 */
-	private void refundForTest(String reservationId, String orderId) {
-		jdbc.update("INSERT INTO refund_intent (reservation_id, order_id, reason) VALUES (?, ?, ?)"
-				+ " ON CONFLICT (reservation_id) DO NOTHING",
-				reservationId, orderId, "payment_arrived_after_expiry");
+	// Gate-contention door, forced deterministically: pre-insert the winner's
+	// gate row, leave resolved_at NULL so the re-check still finds the row live,
+	// then call capture. The gate insert must hit the PK and take the catch path.
+	// Case 1: winner is `captured` (redelivery racing itself).
+	@Test
+	void gateLoserToCapturedReturnsNotCapturableWithoutRefund() {
+		String sku = "TEST-GATE-C-" + shortId();
+		seedSku(sku, 100, 900);
+
+		String orderId = "ord-gate-c-" + shortId();
+		String key = "key-gate-c-" + shortId();
+		assertEquals(201, postOrder("acct-gate-c-" + shortId(), orderId, sku, 1, key).getStatusCode().value(),
+				"reserves");
+		String reservationId = jdbc.queryForObject(
+				"SELECT reservation_id FROM reservations WHERE order_id = ?", String.class, orderId);
+
+		// Simulate the winner's commit: gate row present, stamp not yet visible.
+		jdbc.update("INSERT INTO reservation_resolution (reservation_id, outcome, event_key) VALUES (?, 'captured', ?)",
+				reservationId, reservationId + ":captured");
+
+		PaymentCaptureOutcome outcome = paymentCaptureService.capture(reservationId, orderId);
+
+		assertEquals(PaymentCaptureOutcome.NOT_CAPTURABLE, outcome, "loser to captured is a no-op");
+		assertEquals(1, intAt("SELECT COUNT(*) FROM reservation_resolution WHERE reservation_id = ?",
+				reservationId), "still one resolution");
+		assertEquals("captured", jdbc.queryForObject(
+				"SELECT outcome FROM reservation_resolution WHERE reservation_id = ?", String.class, reservationId),
+				"winner stays captured");
+		assertEquals(0, intAt("SELECT COUNT(*) FROM refund_intent WHERE reservation_id = ?", reservationId),
+				"no refund when the other capture won");
+		assertEquals(1, intAt("SELECT reserved FROM stock_levels WHERE sku = ?", sku),
+				"stock untouched by the loser");
+		assertEquals(0, intAt("SELECT sold FROM stock_levels WHERE sku = ?", sku), "nothing sold twice");
+	}
+
+	// Case 2: winner is `expired` (entry point 1 - lost the gate to the sweeper).
+	@Test
+	void gateLoserToExpiredOpensRefund() {
+		String sku = "TEST-GATE-E-" + shortId();
+		seedSku(sku, 100, 900);
+
+		String orderId = "ord-gate-e-" + shortId();
+		String key = "key-gate-e-" + shortId();
+		assertEquals(201, postOrder("acct-gate-e-" + shortId(), orderId, sku, 1, key).getStatusCode().value(),
+				"reserves");
+		String reservationId = jdbc.queryForObject(
+				"SELECT reservation_id FROM reservations WHERE order_id = ?", String.class, orderId);
+
+		// Simulate expiry's commit winning the gate just before our insert.
+		jdbc.update("INSERT INTO reservation_resolution (reservation_id, outcome, event_key) VALUES (?, 'expired', ?)",
+				reservationId, reservationId + ":expired");
+
+		PaymentCaptureOutcome outcome = paymentCaptureService.capture(reservationId, orderId);
+
+		assertEquals(PaymentCaptureOutcome.REFUND_OPENED, outcome, "loser to expiry opens a refund");
+		assertEquals(1, intAt("SELECT COUNT(*) FROM reservation_resolution WHERE reservation_id = ?",
+				reservationId), "still one resolution");
+		assertEquals(1, intAt("SELECT COUNT(*) FROM refund_intent WHERE reservation_id = ?", reservationId),
+				"one refund intent for the gate loss");
+		assertEquals("payment_arrived_after_expiry", jdbc.queryForObject(
+				"SELECT reason FROM refund_intent WHERE reservation_id = ?", String.class, reservationId),
+				"frozen refund reason");
+		assertEquals(1, intAt("SELECT reserved FROM stock_levels WHERE sku = ?", sku),
+				"stock untouched by the loser");
+		assertEquals(0, intAt("SELECT sold FROM stock_levels WHERE sku = ?", sku), "nothing sold");
 	}
 
 	// -- helpers --------------------------------------------------------------

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Project Rule"
+  short_description: "Maintain repo rule files and index"
+  default_prompt: "Use $add-project-rule to add or update a repository rule and keep the rules index current."

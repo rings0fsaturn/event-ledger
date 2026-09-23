@@ -27,7 +27,7 @@ private static final Map<String, ReservationResolutionOutcome> BY_DB_VALUE = new
 	public static ReservationResolutionOutcome fromDbValue(String dbValue) {
 		
 		if(!StringUtils.hasLength(dbValue))
-			throw new IllegalArgumentException("event_type is null");
+			throw new IllegalArgumentException("outcome is null");
 		
 		ReservationResolutionOutcome outcome = BY_DB_VALUE.get(dbValue);
 		

@@ -51,4 +51,9 @@ public class StockLevelRepoImpl implements StockLevelRepo {
 		return namedJdbcTemplate.update(RepoQueries.decrementReservedStockLevelByQuantity, param);	
 	}
 
+	@Override
+	public Integer decrementReservedIncrementSoldInStockLevelByQuantity(String sku, Integer quantity) {
+		MapSqlParameterSource param = new MapSqlParameterSource().addValue("sku", sku).addValue("quantity", quantity);		
+		return namedJdbcTemplate.update(RepoQueries.decrementReservedIncrementSoldInStockLevelByQuantity, param);
+	}
 }

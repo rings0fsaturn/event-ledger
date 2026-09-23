@@ -9,3 +9,6 @@ venv/
 .work/
 .claude/settings.local.json
 /.metadata/
+
+# graphify build output: regenerable with `graphify update .`
+graphify-out/

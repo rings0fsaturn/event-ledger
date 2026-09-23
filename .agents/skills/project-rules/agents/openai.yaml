@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Rules"
+  short_description: "Apply repo-specific rules when working"
+  default_prompt: "Use $project-rules to load and follow the repository rules before working in this project."
